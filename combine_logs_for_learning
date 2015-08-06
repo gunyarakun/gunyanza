@@ -1,0 +1,57 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+import os
+import sys
+import json
+import codecs
+import shogi
+from shogi import KIF, CSA, Person
+
+FILTER_NON_STANDARD_STARTING = True
+FILTER_NON_PROFESSIONAL = True
+
+import locale
+sys.stdout = codecs.getwriter(locale.getpreferredencoding())(sys.stdout)
+
+if len(sys.argv) != 3:
+    print 'Usage: {0} input_directory_path output_file_path'.format(sys.argv[0])
+    sys.exit(1)
+
+def find_match_log_path(dir_path):
+    for root_path, dir_paths, file_paths in os.walk(dir_path):
+        for file_path in file_paths:
+            if file_path.endswith('.kif') or file_path.endswith('csa'):
+                yield os.path.join(root_path, file_path)
+
+def write_json(file_object, target_object):
+    file_object.write(json.dumps(target_object, separators=(',',':'), sort_keys=True, ensure_ascii=False))
+    file_object.write('\n')
+
+def filter_and_write(file_object, result, source_file_name):
+    if FILTER_NON_STANDARD_STARTING and result['sfen'] != shogi.STARTING_SFEN:
+        return
+    if FILTER_NON_PROFESSIONAL:
+        for name in result['names']:
+            if not Person.Name.is_professional(name):
+                return
+    delete result['names']
+    # result['source_file'] = source_file_name
+    write_json(file_object, result)
+
+with codecs.open(sys.argv[2], 'w', 'utf-8') as f:
+    for match_log_path in find_match_log_path(sys.argv[1]):
+        try:
+            (root, ext) = os.path.splitext(match_log_path)
+            source_file_name = os.path.basename(match_log_path)
+            if ext == '.kif':
+                try:
+                    for result in KIF.Parser.parse_file(match_log_path):
+                        filter_and_write(f, result, source_file_name)
+                except KIF.ParserException as e:
+                    sys.stderr.write('Cannot parse the file: {0}\n{1}\n'.format(match_log_path, e))
+            elif ext == '.csa':
+                for result in CSA.Parser.parse_file(match_log_path):
+                    filter_and_write(f, result, source_file_name)
+        except Exception:
+            sys.stderr.write("Fatel error occurs in parsing {0}".format(match_log_path))
+            raise

@@ -1,0 +1,212 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# This file is part of the gunyanza.
+# Copyright (C) 2014- Erik Bernhardsson
+# Copyright (C) 2015- Tasuku SUENAGA <tasuku-s-github@titech.ac>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+
+from __future__ import unicode_literals, print_function
+
+import numpy as np
+from chainer import cuda, function, FunctionSet, gradient_check, Variable, optimizers
+import chainer.functions as F
+
+import sys
+import time
+import pickle
+import random
+import traceback
+
+import shogi
+from utils import board2arrays
+from network import GunyaNetwork
+
+USE_GPU = True
+
+import sys
+if not hasattr(sys.stdout, 'buffer'):
+    import locale
+    import codecs
+    sys.stdout = codecs.getwriter(locale.getpreferredencoding())(sys.stdout)
+
+def get_model_from_pickle(fn):
+    f = open(fn)
+    model = pickle.load(f)
+    return model
+
+def negamax(board, depth, alpha, beta, color, model, use_gpu):
+    moves = []
+    data = []
+    for move in board.legal_moves:
+        board.push(move)
+        # if board.is_check(): move足さないよ
+        moves.append(move)
+        datum = board2arrays(board, flip=(color==shogi.WHITE))
+        data.append(datum)
+        board.pop()
+    data = np.array(data)
+
+    if len(data) == 0:
+        raise Exception('eh?')
+
+    # Use model to predict scores
+    scores = model.forward(data, use_gpu, False)
+
+    child_nodes = sorted(zip(scores.data, moves), reverse=True)
+
+    best_value = float('-inf')
+    best_move = None
+
+    for score, move in child_nodes:
+        if depth == 1:
+            value = score
+        else:
+            board.push(move)
+            neg_value, _ = negamax(board, depth-1, -beta, -alpha, color ^ 1, model, use_gpu)
+            board.pop()
+            value = -neg_value
+
+        # value += random.gauss(0, 0.001)
+
+        # crdn = sunfish.render(move[0]) + sunfish.render(move[1])
+        # print '\t' * (3 - depth), crdn, score, value
+
+        if value > best_value and not board.is_fourfold_repetition():
+            best_value = value
+            best_move = move
+
+        if value > alpha:
+            alpha = value
+
+        if alpha > beta:
+            break
+
+    return best_value, best_move
+
+
+def create_move(board, move):
+    # workaround for pawn promotions
+
+    # FIXME: 必ず成るようにしとく
+#    if board.piece_at(move.from_square).piece_type == shogi.PAWN:
+#        if int(move.to_square / 9) in [0, 8]:
+#            move.promotion = chess.QUEEN # always promote to queen
+    return move
+
+
+class Player(object):
+    def move(self, board):
+        raise NotImplementedError()
+
+
+class Computer(Player):
+    def __init__(self, model, color, use_gpu, max_depth=5):
+        self._model = model
+        self._color = color
+        self._use_gpu = use_gpu
+        self._max_depth = max_depth
+
+    def move(self, board):
+        # for depth in xrange(1, self._max_depth+1):
+        alpha = float('-inf')
+        beta = float('inf')
+
+        t0 = time.time()
+        best_value, best_move = negamax(board, self._max_depth, alpha, beta, self._color, self._model, self._use_gpu)
+#        crdn = sunfish.render(best_move[0]) + sunfish.render(best_move[1])
+#        print self._max_depth, best_value, crdn, time.time() - t0
+        print(self._max_depth, best_value, best_move, time.time() - t0)
+
+        move = create_move(board, best_move)
+
+        return move
+
+
+class Human(Player):
+    def move(self, board):
+        print(board)
+
+        def get_move(move_str):
+            try:
+                move = chess.Move.from_usi(move_str)
+            except:
+                print('cant parse')
+                return False
+            if move not in board.legal_moves:
+                print('not a legal move')
+                return False
+            else:
+                return move
+
+        while True:
+            print('your turn:')
+            move = get_move(raw_input())
+            if move:
+                break
+
+        return move
+
+
+def game(model, use_gpu):
+    board = shogi.Board()
+
+    max_depth_a = 2 # max reading depth of player A
+    max_depth_b = 2 # max reading depth of player B
+
+    print('maxd a:%f b:%f' % (max_depth_a, max_depth_b))
+
+    player_a = Computer(model, shogi.BLACK, use_gpu, max_depth=max_depth_a)
+    player_b = Computer(model, shogi.WHITE, use_gpu, max_depth=max_depth_b)
+
+    times = {'A': 0.0, 'B': 0.0}
+
+    while True:
+        for side, player in [('A', player_a), ('B', player_b)]:
+            t0 = time.time()
+            try:
+                move = player.move(board)
+            except KeyboardInterrupt:
+                return
+            except:
+                traceback.print_exc()
+                return side + '-exception', times
+
+            times[side] += time.time() - t0
+            print('=========== Player %s: %s' % (side, move))
+            board.push(move)
+            s = board.kif_str()
+            print(s)
+            if move is None:
+                return side, times
+
+def play(pickled_model_path, use_gpu):
+    if use_gpu:
+        print('Use CUDA')
+        cuda.init()
+    model = get_model_from_pickle(pickled_model_path)
+    if use_gpu:
+        model = model.to_gpu()
+    while True:
+        side, times = game(model, use_gpu)
+        f = open('stats.txt', 'a')
+        f.write('%s %f %f\n' % (side, times['A'], times['B']))
+        f.close()
+
+
+if __name__ == '__main__':
+    if len(sys.argv) != 2:
+        print('Usage: {0} pickled_model'.format(sys.argv[0]))
+    else:
+        play(sys.argv[1], USE_GPU)

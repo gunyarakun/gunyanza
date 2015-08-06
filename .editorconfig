@@ -1,0 +1,13 @@
+root = true
+
+[*]
+end_of_line = lf
+indent_size = 4
+insert_final_newline = true
+charset = utf-8
+
+[*.{py,ini}]
+indent_style = space
+trim_trailing_whitespace = true
+insert_final_newline = false
+max_line_length = 120
