@@ -14,19 +14,19 @@ How to use
 
 以下のようにして、学習と、学習結果を用いたコンピュータ同士の対戦を観覧することができます。
 
-```sh
-pip install -r requirements.txt
-# 棋譜からサンプリングした盤面を元にランダムな手を生成し、HDF5形式で保存
-mkdir random_boards
-./generate_random_boards_to_hdf5 kifu random_boards
-# 学習
-mkdir model
-./learn random_boards model 100000 500 0.1
-# 学習が進むのを待つ。誤差が最小値を10回更新するごとに、modelディレクトリにmodel.pickleが出力される
+.. code:: sh
 
-# 学習したモデルを使ってコンピュータ同士で対戦
-./play_game model/gunyanza.model.pickle
-```
+    pip install -r requirements.txt
+    # 棋譜からサンプリングした盤面を元にランダムな手を生成し、HDF5形式で保存
+    mkdir random_boards
+    ./generate_random_boards_to_hdf5 kifu random_boards
+    # 学習
+    mkdir model
+    ./learn random_boards model 100000 500 0.1
+    # 学習が進むのを待つ。誤差が最小値を10回更新するごとに、modelディレクトリにmodel.pickleが出力される
+
+    # 学習したモデルを使ってコンピュータ同士で対戦
+    ./play_game model/gunyanza.model.pickle
 
 FAQ
 ---
